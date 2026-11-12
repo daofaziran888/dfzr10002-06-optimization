@@ -12,7 +12,17 @@ router = APIRouter(prefix="/api/dataset", tags=["分析数据集"])
 
 service = DatasetService()
 
-LIST_FIELDS = ["数据集编号", "数据集名称", "来源表名", "字段列表", "行数上限", "刷新频率", "最近刷新", "是否启用"]
+LIST_FIELDS = [
+    "数据集编号",
+    "数据集名称",
+    "来源表名",
+    "字段列表",
+    "行数上限",
+    "刷新频率",
+    "最近刷新",
+    "是否启用",
+    "数据集代次",
+]
 STATUSES = ["草稿", "待校验", "已启用", "已停用"]
 
 
@@ -30,10 +40,17 @@ def list_entries(
     return PageResult(items=items, total=total, page=page, size=size)
 
 
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出分析数据集清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "dataset", "total": total, "items": items}
+
+
 @router.get("/{entry_id}", response_model=dict)
-def get_entry(entry_id: int) -> dict:
-    """读取单条数据集明细；不存在时给出可读的错误说明。"""
-    entry = service.get_entry(entry_id)
+def get_entry(entry_id: str) -> dict:
+    """读取单条数据集明细：支持内部 id 或数据集编号（如 DATA-0003）。"""
+    entry = service.find_by_ref(entry_id)
     if entry is None:
         raise HTTPException(status_code=404, detail=f"数据集 {entry_id} 不存在或已归档")
     return entry
@@ -49,17 +66,28 @@ def create_entry(payload: EntryPayload) -> ActionResult:
 
 
 @router.post("/{entry_id}/actions", response_model=ActionResult)
-def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
+def run_action(entry_id: str, payload: EntryPayload) -> ActionResult:
     """对单条数据集执行提交校验、启用配置、停用配置；不允许的动作会被拦下并说明原因。"""
     action = str(payload.values.get("action") or "").strip()
-    entry, message = service.run_action(entry_id, action)
+    target = service.find_by_ref(entry_id)
+    if target is None:
+        return ActionResult(ok=False, message=f"数据集 {entry_id} 不存在或已归档")
+    entry, message = service.run_action(int(target["id"]), action)
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
 
 
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出分析数据集清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "dataset", "total": total, "items": items}
+@router.post("/{entry_id}/refresh", response_model=dict)
+def refresh_dataset(entry_id: str) -> dict:
+    """刷新数据集：推进数据集代次，并让所有绑定它的查询模板缓存键立即失效。
+
+    刷新后旧缓存键不会再命中，页面也不会回显旧结果。
+    """
+    entry = service.find_by_ref(entry_id)
+    if entry is None:
+        raise HTTPException(status_code=404, detail=f"数据集 {entry_id} 不存在或已归档")
+    result = service.refresh(str(entry.get("数据集编号")))
+    if result is None:
+        raise HTTPException(status_code=404, detail=f"数据集 {entry_id} 不存在或已归档")
+    return {"ok": True, "message": "数据集已刷新，相关缓存键已失效", **result}

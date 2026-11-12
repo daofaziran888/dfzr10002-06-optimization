@@ -11,7 +11,8 @@ const columns = [
   "行数上限",
   "刷新频率",
   "最近刷新",
-  "是否启用"
+  "是否启用",
+  "数据集代次"
 ]
 const actions = [
   "提交校验",
@@ -67,6 +68,19 @@ export default function DatasetView() {
   useEffect(() => {
     void reload()
   }, [reload])
+
+  async function refreshDataset(row: Row) {
+    setErrorMessage('')
+    try {
+      const response = await request(`${ENDPOINT}/${row.id}/refresh`, { method: 'POST' })
+      if (!response.ok) {
+        throw new Error('数据集刷新失败')
+      }
+      await reload()
+    } catch (error) {
+      setErrorMessage(error instanceof Error ? error.message : '数据集刷新失败')
+    }
+  }
 
   async function runAction(action: string, row: Row) {
     setErrorMessage('')
@@ -137,6 +151,9 @@ export default function DatasetView() {
             <tr key={String(row.id)}>
               {columns.map((column) => <td key={column}>{row[column] ?? '—'}</td>)}
               <td className="row-actions">
+                <button className="link" type="button" onClick={() => void refreshDataset(row)}>
+                  刷新数据集
+                </button>
                 {actions.map((action) => (
                   <button key={action} className="link" type="button" onClick={() => void runAction(action, row)}>
                     {action}

@@ -1,6 +1,7 @@
 """分析数据集业务规则：状态流转、字段校验与筛选口径都收在这里。"""
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from app.store import store
@@ -28,10 +29,50 @@ class DatasetService:
             rows = [row for row in rows if row.get("status") == status]
         total = len(rows)
         start = max(page - 1, 0) * size
-        return rows[start:start + size], total
+        return [self._enrich(row) for row in rows[start:start + size]], total
 
     def get_entry(self, entry_id: int) -> dict[str, Any] | None:
-        return store.find(MODULE, entry_id)
+        entry = store.find(MODULE, entry_id)
+        return None if entry is None else self._enrich(entry)
+
+    def find_by_ref(self, ref: str | int) -> dict[str, Any] | None:
+        text = str(ref)
+        if text.isdigit():
+            row = store.find(MODULE, int(text))
+        else:
+            row = next(
+                (item for item in store.rows(MODULE) if str(item.get("数据集编号")) == text), None
+            )
+        return None if row is None else self._enrich(row)
+
+    def _enrich(self, row: dict[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        dataset_no = str(item.get("数据集编号") or "")
+        if dataset_no:
+            item["数据集代次"] = store.dataset_generation(dataset_no)
+        return item
+
+    def refresh(self, dataset_no: str, *, reason: str = "数据集刷新") -> dict[str, Any] | None:
+        """刷新数据集：推进代次，并让绑定该数据集的查询模板缓存键立即失效。"""
+        entry = self.find_by_ref(dataset_no)
+        if entry is None:
+            return None
+        dataset_no = str(entry.get("数据集编号"))
+        generation = store.bump_dataset_generation(dataset_no)
+        entry["最近刷新"] = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+        entry["数据集代次"] = generation
+        invalidated = self.invalidate_dependents(dataset_no, generation, reason)
+        return {
+            "数据集编号": dataset_no,
+            "数据集代次": generation,
+            "最近刷新": entry["最近刷新"],
+            "失效模板": invalidated,
+        }
+
+    def invalidate_dependents(self, dataset_no: str, generation: int, reason: str) -> list[str]:
+        from app.services.query import QueryService  # 避免模块级循环导入
+
+        return QueryService().invalidate_for_dataset(dataset_no, generation, reason)
 
     def create_entry(self, values: dict[str, Any]) -> tuple[dict[str, Any] | None, list[str]]:
         missing = [field for field in REQUIRED_FIELDS if not str(values.get(field) or "").strip()]

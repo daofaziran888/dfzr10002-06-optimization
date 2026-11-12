@@ -28,6 +28,18 @@ class EntryPayload(BaseModel):
     remark: str | None = None
 
 
+class QueryExecutionPayload(BaseModel):
+    """执行查询模板时提交的参数区与分页边界。
+
+    参数区参与缓存键：参数区不同的两个请求，即使 SQL 相同也不会互相命中。
+    """
+
+    params: dict[str, Any] = Field(default_factory=dict)
+    page: int = 1
+    size: int = 20
+    delay_ms: int = Field(default=0, ge=0, le=30000)
+
+
 
 class IndicatorEntry(BaseModel):
     """业务指标明细结构。"""

@@ -12,7 +12,21 @@ router = APIRouter(prefix="/api/cache", tags=["查询缓存管理"])
 
 service = CacheService()
 
-LIST_FIELDS = ["规则编号", "缓存目标", "缓存时间", "失效条件", "预加载设置", "内存上限", "淘汰策略", "是否启用"]
+LIST_FIELDS = [
+    "规则编号",
+    "缓存目标",
+    "缓存时间",
+    "失效条件",
+    "预加载设置",
+    "内存上限",
+    "淘汰策略",
+    "是否启用",
+    "模板编号",
+    "数据集编号",
+    "数据集代次",
+    "缓存代次",
+    "失效状态",
+]
 STATUSES = ["草稿", "待校验", "已启用", "已停用"]
 
 
@@ -28,6 +42,28 @@ def list_entries(
         raise HTTPException(status_code=400, detail="每页最多 200 条，请缩小分页范围")
     items, total = service.list_entries(keyword=keyword, status=status, page=page, size=size)
     return PageResult(items=items, total=total, page=page, size=size)
+
+
+@router.get("/sync", response_model=dict)
+def sync_rules() -> dict[str, Any]:
+    """按查询模板重新对齐缓存规则清单：代次与失效状态以查询模板为准。"""
+    from app.services.cache import CacheService as _CacheService
+    from app.services.query import QueryService as _QueryService
+
+    cache_service = _CacheService()
+    synced = []
+    for template in _QueryService().list_entries(page=1, size=10000)[0]:
+        rule = cache_service.sync_for_template(template)
+        if rule is not None:
+            synced.append(rule.get("规则编号"))
+    return {"ok": True, "message": "缓存规则清单已与查询模板对齐", "规则编号": synced}
+
+
+@router.get("/export")
+def export_entries() -> dict[str, Any]:
+    """导出查询缓存管理清单：返回当前过滤条件下的全量数据。"""
+    items, total = service.list_entries(page=1, size=10000)
+    return {"module": "cache", "total": total, "items": items}
 
 
 @router.get("/{entry_id}", response_model=dict)
@@ -56,10 +92,3 @@ def run_action(entry_id: int, payload: EntryPayload) -> ActionResult:
     if entry is None:
         return ActionResult(ok=False, message=message)
     return ActionResult(ok=True, message=message, entry=entry)
-
-
-@router.get("/export")
-def export_entries() -> dict[str, Any]:
-    """导出查询缓存管理清单：返回当前过滤条件下的全量数据。"""
-    items, total = service.list_entries(page=1, size=10000)
-    return {"module": "cache", "total": total, "items": items}
